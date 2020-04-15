@@ -1,0 +1,230 @@
+---
+title: "Seoul Air Polution"
+author: "Kandu Jiwandono"
+date: "14 April 2020"
+output: 
+  html_document:
+    number_sections: true
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+    df_print: paged
+    theme: united
+    highlight: tango
+    
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE)
+```
+
+# Introduction
+
+
+The goal of this Rmd is to calculate and predict air pollution level of O~3~ and NO~2~ using ARIMA method at Seoul, South Korea. The datasets was obtained from [kaggle.com](https://www.kaggle.com/bappekim/air-pollution-in-seoul). Thanks to Seoul City, Seoul Open Data Plaza, and Air Quality Analysis Center for providing data.  
+  
+  
+  
+# Get Started
+## Get Library loaded
+
+first thing first, load several library to R. `readr` is required to importing the datasets into R.`tidyverse` is required to tidying the data. `tseries` is required to calculate the ARIMA model. `forecast` is required to make prediction. And also load `ggplot2` to do some data visualization.
+```{r load_library}
+library(readr)
+library(tidyverse)
+library(tseries)
+library(forecast)
+library(ggplot2)
+```
+  
+  
+  
+## Import Datasets
+Next, after we load all of the required R library, we load the Seoul Air Polution datasets into R by using `read_csv` command. We store the datasets into `df_seoul_air_pollution`
+```{r import_datasets}
+df_seoul_air_pollution <- read_csv("datasets/Measurement_summary.csv")
+```
+
+## Getting to know your data
+The very first thing after we imported the data is to know our own datasets. To accomplish that simply just run `glimpse` from `dplyr` packages at R to inspect the datasets.
+```{r inspect-datasets}
+glimpse(df_seoul_air_pollution)
+```
+and also we can view 5 first entry and 5 last entry of the data to get a better look of it.
+```{r head}
+head(df_seoul_air_pollution)
+tail(df_seoul_air_pollution)
+```
+From the results above, we can conclude that 11 columns and 647,511 rows. The columns does not only contain pollutant data but also contain measurement date, and station detail location (address, code, coordinate). The pollutant data consist of SO~2~, NO~2~, O~3~, CO, PM~10~, and PM~2.5~. We also knew that the data is an hourly average data of several polutant start from 2017-01-01 until 2019-12-31.  
+We can also see the summary of our data by running `summary` and we also check total missing data from each row.
+```{r summary}
+summary(df_seoul_air_pollution)
+
+# Checking missing data
+colSums(is.na(df_seoul_air_pollution))
+```
+the results shows that the datasets does not contain any missing data. it means we don't have to do some missing data imputation to the data. Unfortunately we have an incorrect data. There is no way that an concentration value is negative so we are going to fix this data and replace it with other data.
+  
+  
+  
+  
+# Data Cleaning
+## Identifying the problem
+Before conducting the data cleaning process, we need to know why the data needs to clean up. As mention before, the default datasets does not contain a single missing data. Is it true? if we take a look again at the summary of the datasets, we know that there are a negative number in all pollutant concentration. Negative number in concentration are not valid. So, either we change the number with other number such as, mean, median, etc Or we can simply change them into `NA` or missing value.  
+Second, there are several location prior to the data. it means the pollutant data contain several number of station. in this analysis we only use just 1 station which is **`Station Code` 104**.  
+Third, the goal of this RMD is to make a time series model and prediction of O~3~ and NO~2~. So we have to filter out other variable that we dont need. We only need  `O3`, `NO2` and `Measurement Date` data from the datasets and also maybe renaming the `Measurement Date` column so it does contain any space character in its name.  
+Fourth, another problem in this data sets is skipped measurement date. It means that several dates or hour had been skipped for unknown reason. for example, let's take a look at the datasets from **2019-03-11** to **2019-03-20**
+```{r checking_skipped_date}
+df_seoul_air_pollution %>% 
+  filter(`Measurement date`<= as.Date("2019-03-20"), `Measurement date` >= as.Date("2019-03-11"),
+         `Station code` == 104)
+```
+From the table above we can see that at 11 March 2019 the data only available from 05.00 to 09.00, and there are no data inputed 12 March 2019 to 17 March 2019.
+Let's solve the problem from the easier one first.
+
+## Selecting Parameters and station
+The goal of this RMD is to forecast O~3~ and NO~2~ concentration in the future using ARIMA Method therefore, we select only the required columns (which are O~3~, NO~2~, and Measurement date) to make our dataframe clean and tidy. We dont really need any of station detail such as coordinate, address, code, etc because we want to make a time series model.
+```{r select_columns}
+# check the unique value of station code
+df_seoul_air_pollution %>% 
+  distinct(`Station code`)
+
+# filtering station code and selecting parameters
+df_o3_no2 <- df_seoul_air_pollution %>% 
+  filter(`Station code` == 104) %>% 
+  select(`Measurement date`, NO2, O3)
+```
+we store the filtered columns to `df_o3_no2`
+
+## Renaming Columns
+Lets check the columns name on `df_o3_no2` by running `names` in R
+```{r col_names}
+# checking names of columns
+names(df_o3_no2)
+  
+```
+So, the data consists of 3 columns just as we selected before, and the name of the columns is measurement date, NO2, and O3. We change the columns name to make it easier to spell. Change the measurement date column into date column by running `rename` in R and store it again into `df_o3_no2`
+```{r rename_col}
+#renaming columns
+df_o3_no2 <- df_o3_no2 %>% 
+  rename(Date = `Measurement date`)
+
+#check if the column name already changed
+names(df_o3_no2)
+```
+## Filling out skipped date
+As mentioned before, skipped date occurs several times in datasets. The skipped date must be filled, in this case the value will be NA. Filling skipped date data could be done by making a new datasets containing a full series of date, filter it out by the original datet data, and then merged 2 data sets into 1.
+```{r filling_skipped_date}
+# creating a new datasets contain full date from 2017-01-01 to 2019-12-31
+df_full_date <- data.frame(Date = seq(as.POSIXct("2017-01-01 00:00:00"), as.POSIXct("2019-12-31 23:00:00"), by= "hour"),
+                           NO2 = NA, O3 = NA)
+
+# filtering the date
+df_full_date <- df_full_date %>% 
+  filter(!Date %in% df_o3_no2$Date)
+
+# join 2 datasets into a new df
+df_o3_no2 <- df_full_date %>% 
+  full_join(df_o3_no2) %>% 
+  filter(Date >= as.Date("2017-01-01")) %>% 
+  arrange(Date)
+
+# crosscheck if the jobs done
+df_o3_no2 %>% 
+  filter(Date >= as.Date("2019-03-11"), Date <= as.Date("2019-03-20"))
+```
+**JOBS DONE!!**
+
+#######################################################################################################
+## Replacing negative value
+as we all know, the concentration value of a pollutant is not a negative number. there are several observation which has negative number, so either we replace it with any other number or we just simply drop the observation value. First, lets take a look at the negative number on the data
+```{r replacing_neg_value, eval=FALSE, include=FALSE}
+# splitting datasets into two
+df_no2 <- df_o3_no2 %>% 
+  select(Date, NO2)
+
+df_o3 <- df_o3_no2 %>% 
+  select(Date, O3)
+
+# filtering negative data
+## NO2
+df_no2 %>% 
+  filter(NO2 < 0)
+
+## O3
+df_o3 %>% 
+  filter(O3 < 0)
+
+df_o3_no2 %>% 
+  filter(O3<0, NO2 <0)
+
+df_no2 <- df_no2  %>%  
+  mutate(date = as.Date(Date, format = "%Y-%m-%d"),
+         NO2 = replace(NO2, which(NO2<0), NA))
+
+
+
+i = 1
+df_ins = df_no2
+inscol = 2
+mulai = 1
+akhir = 24
+jml_data = 24
+n80 = as.integer(0.8*jml_data)
+N = nrow(df_ins)
+nhari= N/jml_data
+df_no2_baru <- data.frame(Date = seq(as.Date("2017-01-01", format = "%Y-%m-%d"), as.Date("2019-12-31", format = "%Y-%m-%d"), by = "day"), NO2 =1) 
+
+for(i in 1:nhari){
+  if(sum(!is.na(df_ins[mulai:akhir,inscol]))>=n80){ 
+    df_no2_baru[i,2]<-colMeans(df_ins[mulai:akhir,inscol],na.rm = TRUE)
+  }
+  else {df_no2_baru[i,2]=NA}
+  
+  mulai<-mulai+jml_data
+  akhir<-akhir+jml_data
+}
+
+df_no2_baru %>% filter(is.na(NO2))
+df_no2 %>% 
+  mutate(Date = as.Date(Date, format = "%Y-%m-%d"),
+         NO2 = replace(NO2, which(NO2<0), NA)) %>% 
+  group_by(Date) %>% 
+  summarise(avail = sum(!is.na(NO2))) %>% 
+  filter(avail <as.integer(0.8*24))
+```
+
+from the results above, we can conclude that there are 3834 data of NO2, 4059 data of O3, and 3786 data of NO2 and O3 that have negative number on concentration. for further information lets try to plot those two concentration into graph
+
+```{r eval=FALSE, include=FALSE}
+df_no2 %>% 
+  ggplot(aes(x= Date, y= NO2)) +
+  geom_line()+
+  ylim(-1,1)
+```
+
+
+
+## Reshaping Data
+Before we go into further analysis, we must reshape the data and make the data as tidy as possible. First, what we need is a daily average data not an hourly average data, so we calculate the daily average data by averaging 24 hour data for NO~2~. Second, what we need for O~3~ is 8 hour average daily data from 08.00 to 16.00. It is because O~3~ is formed by fotochemical reaction with the help of sun light. So, we need to calculate a new data for both of pollutant.
+
+```{r eval=FALSE, include=FALSE}
+# splitting datasets into two
+df_no2 <- df_o3_no2 %>% 
+  select(Date, NO2)
+
+df_o3 <- df_o3_no2 %>% 
+  select(Date, O3)
+
+#24 hour average for no2
+df_no2 %>% 
+  mutate(Date = as.Date(Date, format = "%Y-%m-%d")) %>% 
+  group_by(Date) %>% 
+  summarise(NO2_daily = mean(NO2)) %>% 
+  ungroup()
+```
+
