@@ -1,5 +1,5 @@
 ---
-title: "Seoul Air Polution"
+title: "Forecasting Seoul Air Polution using ARIMA Model"
 author: "Kandu Jiwandono"
 date: "14 April 2020"
 output: 
@@ -139,10 +139,9 @@ df_o3_no2 %>%
 ```
 **JOBS DONE!!**
 
-#######################################################################################################
 ## Replacing negative value
-as we all know, the concentration value of a pollutant is not a negative number. there are several observation which has negative number, so either we replace it with any other number or we just simply drop the observation value. First, lets take a look at the negative number on the data
-```{r replacing_neg_value, eval=FALSE, include=FALSE}
+as we all know, the concentration value of a pollutant is not a negative number. there are several observation which has negative number, so either we replace it with any other number or we just simply drop the observation value. First, lets take a look at the negative number on the data, and then replace it with `NA`
+```{r replacing_neg_value, results= 'hide'}
 # splitting datasets into two
 df_no2 <- df_o3_no2 %>% 
   select(Date, NO2)
@@ -159,14 +158,34 @@ df_no2 %>%
 df_o3 %>% 
   filter(O3 < 0)
 
+## Both of O3 and NO2
 df_o3_no2 %>% 
   filter(O3<0, NO2 <0)
 
+# replacing negative number with NA
+## NO2
 df_no2 <- df_no2  %>%  
-  mutate(date = as.Date(Date, format = "%Y-%m-%d"),
+  mutate(Date = as.Date(Date, format = "%Y-%m-%d"),
          NO2 = replace(NO2, which(NO2<0), NA))
 
+## O3
+df_o3 <- df_o3 %>% 
+  mutate(Date = as.Date(Date, format = "%Y-%m-%d"),
+         O3 = replace(O3, which(O3<0), NA))
 
+```
+The replacing process should be done by now, and now we have missing value to take care.
+
+
+## Reshaping Data
+Before we go into further analysis, we must reshape the data and make the data as tidy as possible. First, what we need is a daily average data not an hourly average data, so we calculate the daily average data by averaging 24 hour data for NO~2~. Second, what we need for O~3~ is 8 hour average daily data from 08.00 to 16.00. It is because O~3~ is formed by fotochemical reaction with the help of sun light. So, we need to calculate a new data for both of pollutant.  
+
+### NO~2~
+The calculation is not a simple 24 average. First, we need to check if the total available data of the day are 80% or more. if the data is sufficient then we can count the mean by ignoring the missing data. if the data availability below 80% we should drop the data and replace it with `NA`.  
+
+```{r reshape_data_no2}
+
+#24 hour average for no2
 
 i = 1
 df_ins = df_no2
@@ -181,7 +200,7 @@ df_no2_baru <- data.frame(Date = seq(as.Date("2017-01-01", format = "%Y-%m-%d"),
 
 for(i in 1:nhari){
   if(sum(!is.na(df_ins[mulai:akhir,inscol]))>=n80){ 
-    df_no2_baru[i,2]<-colMeans(df_ins[mulai:akhir,inscol],na.rm = TRUE)
+    df_no2_baru[i,2]<-colMeans(as.data.frame(df_ins[mulai:akhir,inscol]),na.rm = TRUE)
   }
   else {df_no2_baru[i,2]=NA}
   
@@ -189,42 +208,201 @@ for(i in 1:nhari){
   akhir<-akhir+jml_data
 }
 
+## checking number of NA
 df_no2_baru %>% filter(is.na(NO2))
-df_no2 %>% 
-  mutate(Date = as.Date(Date, format = "%Y-%m-%d"),
-         NO2 = replace(NO2, which(NO2<0), NA)) %>% 
-  group_by(Date) %>% 
-  summarise(avail = sum(!is.na(NO2))) %>% 
-  filter(avail <as.integer(0.8*24))
+
+rm(i, df_ins, inscol, mulai, akhir, jml_data, n80, N, nhari)
+```
+Store the calculation result as `df_no2_baru`  
+  
+  
+### O~3~
+Like NO~2~, The calculation for reshaping O~3~ data is not a simple 8 hours mean. At first, the data will be filtered only from 08.00 to 16.00 per day. Second, check the availability of the data perday. If the data availability more than 80% then calculate the mean, else we drop the data and replace it with `NA`.
+```{r reshape_data_o3}
+# Daily 8 hours average for O3
+i = 1
+df_ins = df_o3
+inscol = 2
+mulai = 8
+akhir = 16
+jml_data = 24
+n80 = as.integer(0.8*9)
+N = nrow(df_ins)
+nhari= N/jml_data
+df_o3_baru <- data.frame(Date = seq(as.Date("2017-01-01", format = "%Y-%m-%d"), as.Date("2019-12-31", format = "%Y-%m-%d"), by = "day"), O3 =1) 
+
+for(i in 1:nhari){
+  if(sum(!is.na(df_ins[mulai:akhir,inscol]))>=n80){ 
+    df_o3_baru[i,2]<-colMeans(as.data.frame(df_ins[mulai:akhir,inscol]),na.rm = TRUE)
+  }
+  else {df_o3_baru[i,2]=NA}
+  
+  mulai<-mulai+jml_data
+  akhir<-akhir+jml_data
+}
+
+## checking number of NA
+df_o3_baru %>% filter(is.na(O3))
+
+rm(i, df_ins, inscol, mulai, akhir, jml_data, n80, N, nhari)
+```
+Store the calculation result as `df_o3_baru`  
+
+## Imputing missing value
+We need imputing missing value because if we dont impute it we cannot calculate the time series model. The imputation method is interpolation. Interpolation is a type of estimation, a method of constructing new data points within the range of a discrete set of known data points. For the time series type data, we just have to run a function called `tsclean` from `forecast` packages to help us clean the  data.
+
+```{r cleaning_data}
+# Clean NO2
+df_no2_baru$NO2 <-  tsclean(df_no2_baru$NO2)
+
+# Clean O3
+df_o3_baru$O3 <- tsclean(df_o3_baru$O3)
 ```
 
-from the results above, we can conclude that there are 3834 data of NO2, 4059 data of O3, and 3786 data of NO2 and O3 that have negative number on concentration. for further information lets try to plot those two concentration into graph
-
-```{r eval=FALSE, include=FALSE}
-df_no2 %>% 
-  ggplot(aes(x= Date, y= NO2)) +
+  
+# Fitting ARIMA Model
+## Examine your data
+A good starting point to making a model is to take a look at your data. Even we already have the data being cleaned, it does not hurt us to take a look again at the data in order to check the data compability to the model.
+```{r Examine_data, echo=F}
+# Examine Plot NO2
+df_no2_baru %>% 
+  ggplot(aes(x = Date, y= NO2))+
   geom_line()+
-  ylim(-1,1)
+  labs(title = "NO2 in SEOUL",
+       subtitle = "From 2017 to 2019")+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+# Examine plot O3
+df_o3_baru %>% 
+  ggplot(aes(x = Date, y= O3))+
+  geom_line()+
+  labs(title = "O3 in SEOUL",
+       subtitle = "From 2017 to 2019")+
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
 ```
 
-
-
-## Reshaping Data
-Before we go into further analysis, we must reshape the data and make the data as tidy as possible. First, what we need is a daily average data not an hourly average data, so we calculate the daily average data by averaging 24 hour data for NO~2~. Second, what we need for O~3~ is 8 hour average daily data from 08.00 to 16.00. It is because O~3~ is formed by fotochemical reaction with the help of sun light. So, we need to calculate a new data for both of pollutant.
-
-```{r eval=FALSE, include=FALSE}
-# splitting datasets into two
-df_no2 <- df_o3_no2 %>% 
-  select(Date, NO2)
-
-df_o3 <- df_o3_no2 %>% 
-  select(Date, O3)
-
-#24 hour average for no2
-df_no2 %>% 
-  mutate(Date = as.Date(Date, format = "%Y-%m-%d")) %>% 
-  group_by(Date) %>% 
-  summarise(NO2_daily = mean(NO2)) %>% 
-  ungroup()
+From the graphic above, looks like both of the data has seasonality effect. The concentration of NO~2~ rises at the end of the year and decline at the middle of the year. On the contrary, the concentration of O~3~ rises at the middle of the year and decline at the the end of the year. In Korea, the end of the year means winter and the middle of the year means summer. So we can conclude that O~3~ Concentration will increase at Summer but decline at Winter, and NO~2~ concentration wikll increase at Winter but decline at Summer.  
+  
+  
+## Decompose the Data  
+The building block of time series data is seasonality, trend, and cycle. In order to find that, we can decompose the data using `decompose` function in `tseries` packages in R. Decomposing the data aims to detect the data behaviour wether seasonality, trend, and cycle are exist or not.
+```{r decompose_no2, echo = F}
+# Decomposing NO2
+df_no2_ts <- ts(df_no2_baru$NO2, frequency = 365, start = c(2017, 1))
+no2_stl <- stl(df_no2_ts, s.window = "periodic")
+plot(no2_stl, main = "NO2 Decompose")
 ```
+From 4 set of graphs above, we can conclude that, there are seasonal effect in the data and also for there are no significant trend for NO2 concentration data. This information obtained from gray bar at right side of the plot. The grey bar at the seasonal section is a little bigger than at the data section. It indicates that the data has seasonal effect on it.
+
+```{r, decompose_o3, echo=FALSE}
+# Decomposing O3
+df_o3_ts <- ts(df_o3_baru$O3, frequency = 365, start = c(2017, 1))
+o3_stl <- stl(df_o3_ts, s.window = "periodic")
+plot(o3_stl, main = "O3 Decompose")
+```
+
+Again, from the 4 sets of graph above, we can conclude that, there are seasonal effect and no trend in O3 data.
+
+## Dealing with seasonal component
+From the graph before, we can conclude that both of NO~2~ and O~3~ has seasonality effect. From the graph above, the season period of these 2 pollutant approximately are 1 year or 365 days. Before we calculate the ARIMA model, we should remove the seasonality first. Removing seasonality can be done by running `seasadj()` in R.
+```{r season_adj}
+# Season_adj for NO2
+df_no2_ts_adj <- seasadj(no2_stl)
+
+# Season_adj for O3
+df_o3_ts_adj <- seasadj(o3_stl)
+```
+Save the results into new variable called `df_no2_ts_adj` for NO~2~ and `df_o3_ts_adj` for O~3~.
+The other alternative that we can approach is by using seasonal ARIMA model or called SARIMA. This model can handle seasonality that exist in the series so we don't have to adjust the series in order to eliminate the seasonal effect.
+
+## Detecting Stationarity
+Fitting an ARIMA model requires a stationary data. A series is said to be stationary when its mean, variance, and autocovariance are time invariant. This assumption makes intuitive sense: Since ARIMA uses previous lags of series to model its behavior, modeling stable series with consistent properties involves less uncertainty.  
+
+The formal test to check wether a series is stationary is Augmented Dickey-Fuller (ADF). The null hypothesis assumes that the series is non stationary, The ADF test can be done in R by running `adf.test`
+```{r adf_test, echo=FALSE}
+# adf_test for NO2
+adf.test(df_no2_ts)
+
+# adf_test for O3
+adf.test(df_o3_ts)
+```
+
+Both of O~3~ and NO~2~ adf-test results shows they have p-value of 0.01. From the adf-test result we can conclude that both of O~3~ and NO~2~ series are non stationary because both of them have **p-value < 0.05**  
+  
+  
+  
+## Fitting ARIMA Model  
+Fitting ARIMA model or Seasonal ARIMA Model in R requires a packages called `forecast`.
+The `forecast` packages allows user to determine their own order of ARIMA model by using `arima()` function or we can automatically select the order by its aic and bic number by running `auto.arima()` function. In this case, we try to fitting Seasonal ARIMA model by using `auto.arima` function but forcing the function to fit only Seasonal ARIMA.
+```{r auto_arima, warning=TRUE}
+# Fitting ARIMA model NO2
+fit_no2 <- auto.arima(df_no2_ts,stepwise = F, test = "adf", seasonal = TRUE, D= 1,
+                      seasonal.test = "ocsb")
+
+# Fitting ARIMA model O3
+fit_o3 <- auto.arima(df_o3_ts, stepwise = F, test = "adf", D=1, 
+                     seasonal = TRUE, seasonal.test = "ocsb")
+
+summary(fit_no2)
+summary(fit_o3)
+
+```
+store the fitted Seasonal ARIMA model in a new variable called `fit_no2` for NO2 model, and `fit_o3` for O3 model.
+After we fitted Seasonal ARIMA model for each pollutant now we can forecast both of pollutant concentration. Forecasting concentration from fitted model can be done by running `forecast()`.
+```{r forecasting}
+# Forecasting for NO2
+no2_forecasted <- forecast(fit_no2, h = 365)
+
+# Forecasting for O3
+o3_forecasted <- forecast(fit_o3, h= 365)
+```
+Store the forecast results to a new variable called `no2_forecasted` and `o3_forecasted` for each pollutant. Take a look at first 30 days of forecasted concentration from both pollutant
+```{r forecast_view}
+# Creating data frame from first 30 days of forecasted data
+forecasted <- data.frame(DATE = seq(as.Date("2020-01-01", format = "%Y-%m-%d"), as.Date("2020-01-30", format = "%Y-%m-%d"), by = "day"),
+           no2_forecasted = no2_forecasted$mean[1:30],
+           O3 = o3_forecasted$mean[1:30])
+```
+```{r preview_forecasted , echo=F}
+forecasted
+```
+
+if we plot all of the forecasted results in 365 day, the graph would be 
+```{r plot, echo = FALSE}
+# Plot NO2
+autoplot(no2_forecasted)+
+  labs(title = "NO2 Forecast from ARIMA(4,0,1)(0,1,0)[365] with drift",
+       y= "NO2 Concentration",
+       x= "Date")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Plot O3
+autoplot(o3_forecasted)+
+  labs(title = "O3 Forecast from ARIMA(3,0,1)(0,1,0)[365]",
+       y= "NO2 Concentration",
+       x= "Date")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## Model Accuracy
+Last, ofcourse we want to know how well our model works. To find out how well our model works we can just model accuracy as a parameter to evaluate our fitted model.
+```{r accuracy}
+# NO2 model accuracy
+accuracy(fit_no2)
+
+# O3 model accuracy
+accuracy(fit_o3)
+```
+
+From the results above, we can say that the average percentage error of the NO~2~ model is 26.75% and for O~3~ we cant really tell how much the error. This indicates that something wrong with the model. First we check the acf and pacf from model residuals
+```{r}
+acf(fit_no2$residuals)
+pacf(fit_no2$residuals)
+
+acf(fit_o3$residuals)
+pacf(fit_o3$residuals)
+```
+The ACF and PACF plot for those 2 models seems awful. There are so many of black vertical lines crossing the blue striped line. It means that the model does not meet auto correlation assumption. The model error can also caused by ARIMA model itself since it cannot handle longer period of seasonality and multiple seasonality.  This problem can be solved by transforming daily data into weekly or maybe monthly data in order to shorten the period of seasonality.
 
