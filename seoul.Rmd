@@ -12,7 +12,7 @@ output:
     df_print: paged
     theme: united
     highlight: tango
-    
+    keep_md: true
 ---
 
 ```{r setup, include=FALSE}
