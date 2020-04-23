@@ -3,6 +3,9 @@ title: "Forecasting Seoul Air Polution using ARIMA Model"
 author: "Kandu Jiwandono"
 date: "14 April 2020"
 output: 
+  github_document:
+    toc: true
+    toc_depth: 2
   html_document:
     number_sections: true
     toc: true
