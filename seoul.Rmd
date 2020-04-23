@@ -12,7 +12,9 @@ output:
     df_print: paged
     theme: united
     highlight: tango
-    keep_md: true
+  github_document :
+    toc: true
+    toc_depth: 2
 ---
 
 ```{r setup, include=FALSE}
